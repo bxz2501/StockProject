@@ -53,7 +53,7 @@ def getCurrentPosition(symbol):
 # %%
 def OpenTrade(symbol, marketPrice, stockPrice, position):
     share2 = 1.0
-    share1 = round((marketPrice / stockPrice) / 100, 0) * 100
+    share1 = round((marketPrice * 5 / stockPrice) / 100, 0) * 100
     
     query = f"""INSERT INTO [dbo].[ArbitrageMLTrade]
            ([AccountName]
