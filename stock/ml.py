@@ -169,7 +169,7 @@ def processResult(currentPosition, predictions):
     if currentPosition == -1:
         if prediction > .55:
             return ToTrade.CloseLong
-        if prediction > .52:
+        elif prediction > .52:
             return ToTrade.Close
 
 
