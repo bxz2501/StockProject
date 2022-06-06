@@ -12,10 +12,9 @@ conn = pyodbc.connect(
 
 
 def getData(symbol):
-    query = f"""select top 2050 m1.date as 'Date',DATEPART(hour, m1.Date) AS 'Hour', m1.[Close] as 'Market', m2.[close] as 'Stock'  from MinuteQuote m1
+    query = f"""select top 2059 m1.date as 'Date',DATEPART(hour, m1.Date) AS 'Hour', m1.[Close] as 'Market', m2.[close] as 'Stock'  from MinuteQuote m1
     inner join MinuteQuote m2 on m1.Date = m2.date
-    where m1.Date > getdate() - 720 and m1.Contract = 'ym' and m2.Contract = '{symbol}'
-    and (DATEPART(minute, m1.Date) % 30 = 0)
+    where m1.Date > getdate() - 45 and m1.Contract = 'ym' and m2.Contract = '{symbol}'
     order by m1.date desc"""
 
     with warnings.catch_warnings():
@@ -102,7 +101,7 @@ def OpenTrade(symbol, marketPrice, stockPrice, position):
 # %%
 def CloseTrade(symbol):
     query = f"""UPDATE [dbo].[ArbitrageMLTrade]
-           SET Active = 0 WHERE Symbol1 = '{symbol}' AND Active = 1"""
+           SET Active = 0, ExitTime = GETDATE(), ModifiedOn = GETDATE() WHERE Symbol1 = '{symbol}' AND Active = 1"""
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
@@ -134,10 +133,12 @@ def getPredictors(df):
 
 # %%
 def getMLdata(df, predictors):
+    df = df[df.index.minute % 30 == 0]
     prev = df.copy()
     prev = prev.shift(1)
-    data = df[["OutPerform", "Target"]]
+    data = df[["OutPerform","Target","Stock","Market"]]
     data = data.join(prev[predictors])
+    transformData(data)
     data = data.copy().dropna()
     return data
 
@@ -155,74 +156,48 @@ def processResult(currentPosition, predictions):
     prediction = predictions[len(predictions) - 1]
 
     if currentPosition == 0:
-        if prediction > .55:
+        if prediction > .57:
             return ToTrade.OpenLong
-        elif prediction < .45:
+        elif prediction < .43:
             return ToTrade.OpenShort
 
     if currentPosition == 1:
-        if prediction < .45:
+        if prediction < .43:
             return ToTrade.CloseShort
-        elif prediction < .48:
+        elif prediction < .50:
             return ToTrade.Close
 
     if currentPosition == -1:
-        if prediction > .55:
+        if prediction > .57:
             return ToTrade.CloseLong
-        elif prediction > .52:
+        elif prediction > .50:
             return ToTrade.Close
 
 
 # %%
-symbols = [
-    'CVX',
-    'HON',
-    'CRM',
-    'UNH',
-    'CSCO',
-    'WMT',
-    'AXP',
-    'JPM',
-    'MCD',
-    'HD',
-    'AMGN',
-    'V',
-    'INTC',
-    'WBA',
-    'GS',
-    'JNJ',
-    'PG',
-    'AAPL',
-    'DIS',
-    'MMM',
-    'MRK',
-    'MSFT',
-    'TRV',
-    'VZ',
-    'IBM',
-    'CAT',
-    'NKE']
-for s in symbols:
-    df = getData(s)
-    transformData(df)
-    predictors = getPredictors(df)
-    data = getMLdata(df, predictors)
-    with open(s, 'rb') as f:
-        model = pickle.load(f)
-        predictions = model.predict_proba(data[predictors])[:, 1]
-        currentPosition = getCurrentPosition(s)
-        totrade = processResult(currentPosition, predictions)
-        if totrade == ToTrade.OpenLong:
-            OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)
-        elif totrade == ToTrade.OpenShort:     
-            OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)
-        elif totrade == ToTrade.Close:
-            CloseTrade(s)   
-        elif totrade == ToTrade.CloseLong:
-            CloseTrade(s)
-            OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)  
-        elif totrade == ToTrade.CloseShort:  
-            CloseTrade(s)
-            OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)       
+import sys
 
-
+s = sys.argv[1]
+df = getData(s)
+transformData(df)
+predictors = getPredictors(df)
+data = getMLdata(df, predictors)
+# print(s)
+# sys.stdout.flush()
+with open(s, 'rb') as f:
+    model = pickle.load(f)
+    predictions = model.predict_proba(data[predictors])[:, 1]
+    currentPosition = getCurrentPosition(s)
+    totrade = processResult(currentPosition, predictions)
+    if totrade == ToTrade.OpenLong:
+        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)
+    elif totrade == ToTrade.OpenShort:     
+        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)
+    elif totrade == ToTrade.Close:
+        CloseTrade(s)   
+    elif totrade == ToTrade.CloseLong:
+        CloseTrade(s)
+        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)  
+    elif totrade == ToTrade.CloseShort:  
+        CloseTrade(s)
+        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)       
