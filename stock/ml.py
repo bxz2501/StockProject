@@ -182,11 +182,12 @@ df = getData(s)
 transformData(df)
 predictors = getPredictors(df)
 data = getMLdata(df, predictors)
-# print(s)
-# sys.stdout.flush()
+
 with open(s, 'rb') as f:
     model = pickle.load(f)
     predictions = model.predict_proba(data[predictors])[:, 1]
+    print(predictions)
+    sys.stdout.flush()
     currentPosition = getCurrentPosition(s)
     totrade = processResult(currentPosition, predictions)
     if totrade == ToTrade.OpenLong:
