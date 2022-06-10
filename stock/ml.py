@@ -12,7 +12,7 @@ conn = pyodbc.connect(
 
 
 def getData(symbol):
-    query = f"""select top 2059 m1.date as 'Date',DATEPART(hour, m1.Date) AS 'Hour', m1.[Close] as 'Market', m2.[close] as 'Stock'  from MinuteQuote m1
+    query = f"""select top 2059 m1.date as 'Date',DATEPART(hour, m1.Date) AS 'Hour', m1.[Close] as 'Market', m2.[close] as 'Stock' from MinuteQuote m1
     inner join MinuteQuote m2 on m1.Date = m2.date
     where m1.Date > getdate() - 45 and m1.Contract = 'ym' and m2.Contract = '{symbol}'
     order by m1.date desc"""
@@ -36,9 +36,9 @@ class ToTrade(Enum):
     
 
 # %%
-def getCurrentPosition(symbol):
+def getCurrentPosition(account, symbol):
     query = f"""select * from ArbitrageMLTrade
-                where AccountName = 'xieie181' and Symbol1 = '{symbol}' and Active = 1"""
+                where AccountName = '{account}' and Symbol1 = '{symbol}' and Active = 1"""
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
@@ -50,7 +50,7 @@ def getCurrentPosition(symbol):
 
 
 # %%
-def OpenTrade(symbol, marketPrice, stockPrice, position):
+def OpenTrade(account, symbol, marketPrice, stockPrice, position):
     share2 = 1.0
     share1 = round((marketPrice * 5 / stockPrice) / 100, 0) * 100
     
@@ -73,7 +73,7 @@ def OpenTrade(symbol, marketPrice, stockPrice, position):
            ,[CreatedOn]
            ,[ModifiedOn])
      VALUES
-           ('xieie181'
+           ('{account}'
            ,'Stock'
            ,'Future'
            ,'{symbol}'
@@ -99,9 +99,9 @@ def OpenTrade(symbol, marketPrice, stockPrice, position):
 
 
 # %%
-def CloseTrade(symbol):
+def CloseTrade(account, symbol):
     query = f"""UPDATE [dbo].[ArbitrageMLTrade]
-           SET Active = 0, ExitTime = GETDATE(), ModifiedOn = GETDATE() WHERE Symbol1 = '{symbol}' AND Active = 1"""
+           SET Active = 0, ExitTime = GETDATE(), ModifiedOn = GETDATE() WHERE Symbol1 = '{symbol}' AND AccountName = '{account}' AND Active = 1"""
 
     with warnings.catch_warnings():
         warnings.simplefilter('ignore', UserWarning)
@@ -110,12 +110,11 @@ def CloseTrade(symbol):
         conn.commit()
 
 # %%
+
 def transformData(df):
-    df["StockReturn"] = df.rolling(2).apply(
-        lambda x: x.iloc[1] / x.iloc[0] - 1)["Stock"]
-    df["MarketReturn"] = df.rolling(2).apply(
-        lambda x: x.iloc[1] / x.iloc[0] - 1)["Market"]
-    df["OutPerform"] = df["StockReturn"] - df["MarketReturn"]
+    df[f'StockReturn'] = df["Stock"] / df["Stock"].shift(1) - 1
+    df[f'MarketReturn'] = df["Market"] / df["Market"].shift(1) - 1
+    df[f"OutPerform"] = df['StockReturn'] - df['MarketReturn']
     df["Target"] = (df.apply(lambda x: x > 0)["OutPerform"]).astype(int)
 
 
@@ -123,25 +122,17 @@ def transformData(df):
 def getPredictors(df):
     predictors = ['Hour']
     for i in range(12):
-        df[f'OutPerform{pow(2,i)*5}'] = df['OutPerform'].rolling(pow(2, i)).sum()
+        df[f'OutPerform{pow(2,i)*5}'] = df['OutPerform'].rolling(pow(2,i)).sum()
         predictors.append(f'OutPerform{pow(2,i)*5}')
-        df[f'StockReturn{pow(2,i)*5}'] = df['StockReturn'].rolling(pow(2, i)).sum()
+        df[f'StockReturn{pow(2,i)*5}'] = df['StockReturn'].rolling(pow(2,i)).sum()
         predictors.append(f'StockReturn{pow(2,i)*5}')
-
     return predictors
 
 
 # %%
 def getMLdata(df, predictors):
     df = df[df.index.minute % 30 == 0]
-    prev = df.copy()
-    prev = prev.shift(1)
-    data = df[["OutPerform","Target","Stock","Market"]]
-    data = data.join(prev[predictors])
-    transformData(data)
-    data = data.copy().dropna()
-    return data
-
+    return df.iloc[-1:]
 
 # %%
 def predict(test, predictors, model):
@@ -175,30 +166,62 @@ def processResult(currentPosition, predictions):
 
 
 # %%
+
 import sys
+# symbols = [
+#     'CVX',
+#     'HON',
+#     'CRM',
+#     'UNH',
+#     'CSCO',
+#     'WMT',
+#     'AXP',
+#     'JPM',
+#     'MCD',
+#     'HD',
+#     'AMGN',
+#     'V',
+#     'INTC',
+#     'WBA',
+#     'GS',
+#     'JNJ',
+#     'PG',
+#     'AAPL',
+#     'DIS',
+#     'MMM',
+#     'MRK',
+#     'MSFT',
+#     'TRV',
+#     'VZ',
+#     'IBM',
+#     'CAT',
+#     'NKE']
+symbols = sys.argv[1:]  
+accounts = ['xieie263', 'xieie181']  
+for s in symbols:
+    df = getData(s)
+    transformData(df)
+    predictors = getPredictors(df)
+    data = getMLdata(df, predictors)
+    with open(f"Model/{s}", 'rb') as f:
+        model = pickle.load(f)
+        predictions = model.predict_proba(data[predictors])[:, 1]
+        print(s, predictions)
+        for account in accounts:
+            currentPosition = getCurrentPosition(account, s)
+            totrade = processResult(currentPosition, predictions)
+            if totrade == ToTrade.OpenLong:
+                OpenTrade(account, s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)
+            elif totrade == ToTrade.OpenShort:     
+                OpenTrade(account, s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)
+            elif totrade == ToTrade.Close:
+                CloseTrade(account, s)   
+            elif totrade == ToTrade.CloseLong:
+                CloseTrade(account, s)
+                OpenTrade(account, s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)  
+            elif totrade == ToTrade.CloseShort:  
+                CloseTrade(account, s)
+                OpenTrade(account, s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)       
+sys.stdout.flush()        
 
-s = sys.argv[1]
-df = getData(s)
-transformData(df)
-predictors = getPredictors(df)
-data = getMLdata(df, predictors)
 
-with open(s, 'rb') as f:
-    model = pickle.load(f)
-    predictions = model.predict_proba(data[predictors])[:, 1]
-    print(predictions)
-    sys.stdout.flush()
-    currentPosition = getCurrentPosition(s)
-    totrade = processResult(currentPosition, predictions)
-    if totrade == ToTrade.OpenLong:
-        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)
-    elif totrade == ToTrade.OpenShort:     
-        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)
-    elif totrade == ToTrade.Close:
-        CloseTrade(s)   
-    elif totrade == ToTrade.CloseLong:
-        CloseTrade(s)
-        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], 1)  
-    elif totrade == ToTrade.CloseShort:  
-        CloseTrade(s)
-        OpenTrade(s, df['Market'][len(df) - 1], df['Stock'][len(df) - 1], -1)       
