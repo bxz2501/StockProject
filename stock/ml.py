@@ -52,7 +52,10 @@ def getCurrentPosition(account, symbol):
 # %%
 def OpenTrade(account, symbol, marketPrice, stockPrice, position):
     share2 = 1.0
-    share1 = round((marketPrice * 5 / stockPrice) / 100, 0) * 100
+    if account > "xieie263":
+        share2 = 0.1
+
+    share1 = round((marketPrice * share2 * 5 / stockPrice) / 100, 0) * 100
     
     query = f"""INSERT INTO [dbo].[ArbitrageMLTrade]
            ([AccountName]
@@ -126,12 +129,14 @@ def getPredictors(df):
         predictors.append(f'OutPerform{pow(2,i)*5}')
         df[f'StockReturn{pow(2,i)*5}'] = df['StockReturn'].rolling(pow(2,i)).sum()
         predictors.append(f'StockReturn{pow(2,i)*5}')
+        df[f'MarketReturn{pow(2,i)*5}'] = df['MarketReturn'].rolling(pow(2,i)).sum()
+        predictors.append(f'MarketReturn{pow(2,i)*5}')
     return predictors
 
 
 # %%
 def getMLdata(df, predictors):
-    df = df[df.index.minute % 30 == 0]
+    df = df[(df.index.minute == 25) | (df.index.minute == 55) ]
     return df.iloc[-1:]
 
 # %%
@@ -168,36 +173,8 @@ def processResult(currentPosition, predictions):
 # %%
 
 import sys
-# symbols = [
-#     'CVX',
-#     'HON',
-#     'CRM',
-#     'UNH',
-#     'CSCO',
-#     'WMT',
-#     'AXP',
-#     'JPM',
-#     'MCD',
-#     'HD',
-#     'AMGN',
-#     'V',
-#     'INTC',
-#     'WBA',
-#     'GS',
-#     'JNJ',
-#     'PG',
-#     'AAPL',
-#     'DIS',
-#     'MMM',
-#     'MRK',
-#     'MSFT',
-#     'TRV',
-#     'VZ',
-#     'IBM',
-#     'CAT',
-#     'NKE']
 symbols = sys.argv[1:]  
-accounts = ['xieie263', 'xieie181']  
+accounts = ['xieie181']  
 for s in symbols:
     df = getData(s)
     transformData(df)
